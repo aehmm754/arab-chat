@@ -21,21 +21,18 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
-
       - name: Check Supabase URL
         run: |
           if grep -q "YOUR-PROJECT-REF" .env.production && [ -z "${{ secrets.SUPABASE_URL }}" ]; then
-            echo "::error::عدّل NEXT_PUBLIC_SUPABASE_URL داخل ملف .env.production (أو أضف Secret باسم SUPABASE_URL)"
+            echo "::error::Fix NEXT_PUBLIC_SUPABASE_URL in .env.production"
             exit 1
           fi
 
-      - name: Install & build web
+      - name: Install and build web
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
-          # لو ما في Secrets، يستخدم القيم الموجودة في .env.production
           [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] && unset NEXT_PUBLIC_SUPABASE_URL
           [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ] && unset NEXT_PUBLIC_SUPABASE_ANON_KEY
           npm ci || npm install
@@ -43,7 +40,6 @@ jobs:
           npx cap sync android
 
       - name: Prepare signing key
-        id: sign
         run: |
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/release.keystore
@@ -51,7 +47,6 @@ jobs:
             echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
           else
-            echo "::warning::ما في Keystore بالـ Secrets، رح يتم توقيع مؤقت. لا ترفع هذا الـ AAB على Play Store."
             keytool -genkeypair -v -keystore $RUNNER_TEMP/release.keystore -alias temp \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass temp1234 -keypass temp1234 -dname "CN=ArabChat"
@@ -61,7 +56,7 @@ jobs:
           fi
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
 
-      - name: Build APK + AAB
+      - name: Build APK and AAB
         working-directory: android
         env:
           VERSION_CODE: ${{ github.run_number }}
