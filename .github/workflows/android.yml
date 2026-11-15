@@ -1,0 +1,80 @@
+name: Build Android (APK + AAB)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Check Supabase URL
+        run: |
+          if grep -q "YOUR-PROJECT-REF" .env.production && [ -z "${{ secrets.SUPABASE_URL }}" ]; then
+            echo "::error::عدّل NEXT_PUBLIC_SUPABASE_URL داخل ملف .env.production (أو أضف Secret باسم SUPABASE_URL)"
+            exit 1
+          fi
+
+      - name: Install & build web
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          # لو ما في Secrets، يستخدم القيم الموجودة في .env.production
+          [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] && unset NEXT_PUBLIC_SUPABASE_URL
+          [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ] && unset NEXT_PUBLIC_SUPABASE_ANON_KEY
+          npm ci || npm install
+          npm run build
+          npx cap sync android
+
+      - name: Prepare signing key
+        id: sign
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/release.keystore
+            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+            echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+          else
+            echo "::warning::ما في Keystore بالـ Secrets، رح يتم توقيع مؤقت. لا ترفع هذا الـ AAB على Play Store."
+            keytool -genkeypair -v -keystore $RUNNER_TEMP/release.keystore -alias temp \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass temp1234 -keypass temp1234 -dname "CN=ArabChat"
+            echo "KEY_ALIAS=temp" >> $GITHUB_ENV
+            echo "KEYSTORE_PASSWORD=temp1234" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=temp1234" >> $GITHUB_ENV
+          fi
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
+
+      - name: Build APK + AAB
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease bundleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arab-chat-apk
+          path: android/app/build/outputs/apk/release/*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arab-chat-aab
+          path: android/app/build/outputs/bundle/release/*.aab
