@@ -1,0 +1,47 @@
+name: Build iOS (IPA)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and build web
+        run: |
+          npm ci || npm install
+          npm run build
+          npx cap sync ios
+
+      - name: Build unsigned archive
+        working-directory: ios/App
+        run: |
+          xcodebuild archive \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/App.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tail -30
+
+      - name: Package IPA
+        run: |
+          mkdir -p $RUNNER_TEMP/ipa/Payload
+          cp -R $RUNNER_TEMP/App.xcarchive/Products/Applications/App.app $RUNNER_TEMP/ipa/Payload/
+          cd $RUNNER_TEMP/ipa
+          zip -qry $GITHUB_WORKSPACE/arab-chat.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arab-chat-ipa
+          path: arab-chat.ipa
